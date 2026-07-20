@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>마이크 녹음</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #f4f4f4;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    margin: 0;
+    text-align: center;
+    padding: 20px;
+    box-sizing: border-box;
+  }
+  h1 { font-size: 20px; margin-bottom: 8px; }
+  p.desc { color: #666; font-size: 14px; margin-bottom: 24px; }
+  #timer { font-size: 32px; font-weight: 600; margin-bottom: 24px; color: #2F6F62; }
+  button {
+    font-size: 16px;
+    padding: 16px 32px;
+    border-radius: 999px;
+    border: none;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  #recordBtn {
+    background: #2F6F62;
+    color: white;
+  }
+  #recordBtn.recording {
+    background: #C0392B;
+  }
+  #status {
+    margin-top: 16px;
+    font-size: 13px;
+    color: #999;
+  }
+  #errorBox {
+    margin-top: 16px;
+    color: #C0392B;
+    font-size: 13px;
+    max-width: 320px;
+  }
+</style>
+</head>
+<body>
+  <h1>마이크 녹음</h1>
+  <p class="desc">녹음이 끝나면 이 창은 자동으로 닫히고<br>원래 화면으로 돌아갑니다.</p>
+  <div id="timer">00:00</div>
+  <button id="recordBtn">녹음 시작</button>
+  <div id="status"></div>
+  <div id="errorBox"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  let mediaRecorder = null;
+  let audioChunks = [];
+  let stream = null;
+  let seconds = 0;
+  let timerId = null;
+  let isRecording = false;
+
+  const recordBtn = document.getElementById('recordBtn');
+  const timerEl = document.getElementById('timer');
+  const statusEl = document.getElementById('status');
+  const errorBox = document.getElementById('errorBox');
+
+  function formatTime(sec) {
+    const m = String(Math.floor(sec / 60)).padStart(2, '0');
+    const s = String(sec % 60).padStart(2, '0');
+    return `${m}:${s}`;
+  }
+
+  function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  async function startRecording() {
+    errorBox.textContent = '';
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      errorBox.textContent = `마이크 오류 [${err.name}]: ${err.message}`;
+      return;
+    }
+
+    audioChunks = [];
+
+    // [수정] Cloud STT 연동을 위해 WebM(Opus) 코덱으로 고정
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus' : 'audio/webm';
+
+    // [수정] Cloud STT 음성 인식에 최적화된 비트레이트 (24kbps)
+    try {
+      mediaRecorder = new MediaRecorder(stream, {
+        mimeType,
+        audioBitsPerSecond: 24000
+      });
+    } catch (e) {
+      // 옵션 지원 에러 시 폴백
+      mediaRecorder = new MediaRecorder(stream);
+    }
+
+    mediaRecorder.ondataavailable = e => {
+      if (e.data.size > 0) audioChunks.push(e.data);
+    };
+
+    mediaRecorder.onstop = async () => {
+      const finalMimeType = mediaRecorder.mimeType || mimeType;
+      const audioBlob = new Blob(audioChunks, { type: finalMimeType });
+      const base64Data = await blobToBase64(audioBlob);
+
+      statusEl.textContent = '전달 중이에요…';
+
+      // [유지] 팝업 창과 iframe 매립 방식을 모두 지원 (GAS 연동 시 필수)
+      const targetWindow = window.opener || window.parent;
+      if (targetWindow && targetWindow !== window) {
+        targetWindow.postMessage({
+          type: 'recording-complete',
+          base64Data,
+          mimeType: finalMimeType
+        }, '*'); 
+      }
+
+      // [유지] window.close() 브라우저 보안 차단 방어 로직
+      setTimeout(() => {
+        window.close();
+        statusEl.textContent = '전달 완료! 창이 닫히지 않으면 직접 닫아주세요.';
+        recordBtn.style.display = 'none';
+      }, 500);
+    };
+
+    mediaRecorder.start();
+
+    seconds = 0;
+    timerEl.textContent = formatTime(0);
+    timerId = setInterval(() => {
+      seconds++;
+      timerEl.textContent = formatTime(seconds);
+    }, 1000);
+
+    isRecording = true;
+    recordBtn.textContent = '녹음 종료';
+    recordBtn.classList.add('recording');
+    statusEl.textContent = '녹음 중이에요…';
+  }
+
+  function stopRecording() {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      mediaRecorder.stop();
+    }
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    clearInterval(timerId);
+
+    isRecording = false;
+    recordBtn.textContent = '녹음 시작';
+    recordBtn.classList.remove('recording');
+  }
+
+  recordBtn.addEventListener('click', () => {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  });
+
+  window.addEventListener('beforeunload', () => {
+    if (stream) stream.getTracks().forEach(t => t.stop());
+  });
+})();
+</script>
+</body>
+</html>
