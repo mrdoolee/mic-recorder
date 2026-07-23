@@ -1,254 +1,112 @@
-<script>
-  // 환경설정 시트에서 읽어온 값 (Index.html의 APP_CONFIG 스크립틀릿에서 주입됨)
-  var MIC_PAGE_URL    = APP_CONFIG.MIC_PAGE_URL;
-  var MIC_PAGE_ORIGIN = APP_CONFIG.MIC_PAGE_ORIGIN;
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <?!= include('Stylesheet'); ?>
+</head>
+<body>
+  <div class="app-shell">
+    <div class="brand"><span class="dot"></span>음성 발음 평가 시스템</div>
 
-  var selectedCount = 10;
-  var selectedMode  = 'SCORE'; // 'SCORE' | 'TIME'
-  var selectedStudent = null;  // { id, name }
-  var quizData    = null;      // { quiz: [...] }
-  var lastResult  = null;      // 팝업에서 받은 최종 채점 결과
-  var popupRef    = null;
+    <div class="error-box" id="error-box"></div>
 
-  function showView(id){
-    document.querySelectorAll('.view').forEach(function(v){ v.classList.remove('active'); });
-    document.getElementById(id).classList.add('active');
-  }
+    <!-- ① 학생 선택/설정 -->
+    <div class="view active" id="view-login">
+      <div class="card">
+        <h1 class="title">오늘의 발음 평가</h1>
+        <p class="subtitle">화면에 나온 단어를 정확히 발음하면 자동으로 채점됩니다.</p>
 
-  function showError(msg){
-    var box = document.getElementById('error-box');
-    box.textContent = msg;
-    box.classList.add('show');
-  }
-  function clearError(){
-    document.getElementById('error-box').classList.remove('show');
-  }
+        <p class="field-label">학년 선택</p>
+        <select class="select-box" id="select-grade">
+          <option value="">-- 학년 선택 --</option>
+        </select>
 
-  /* ---------- ① 학생 선택/설정 화면 ---------- */
+        <p class="field-label">반 선택</p>
+        <select class="select-box" id="select-class" disabled>
+          <option value="">-- 먼저 학년을 선택하세요 --</option>
+        </select>
 
-  var fullStudentList = [];
+        <p class="field-label">이름 선택</p>
+        <select class="select-box" id="select-student" disabled>
+          <option value="">-- 먼저 반을 선택하세요 --</option>
+        </select>
 
-  google.script.run.withSuccessHandler(function(list){
-    fullStudentList = list;
-    var grades = [];
-    list.forEach(function(s){ if (s.grade && grades.indexOf(s.grade) === -1) grades.push(s.grade); });
-    grades.sort();
-    var gradeSelect = document.getElementById('select-grade');
-    grades.forEach(function(g){
-      var opt = document.createElement('option');
-      opt.value = g; opt.textContent = g + '학년';
-      gradeSelect.appendChild(opt);
-    });
-  }).withFailureHandler(function(err){
-    showError('학생 명단을 불러오지 못했습니다: ' + err.message);
-  }).getStudentList();
+        <p class="field-label">출제 방식 선택</p>
+        <div class="chip-row" id="mode-row">
+          <div class="chip selected" data-mode="SCORE">채점 모드</div>
+          <div class="chip" data-mode="TIME">시간측정 모드</div>
+        </div>
+        <p class="mode-desc" id="mode-desc">문항마다 제한시간 안에 맞히면 정답, 못 맞히면 오답으로 채점합니다.</p>
 
-  document.getElementById('select-grade').addEventListener('change', function(){
-    var grade = this.value;
-    var classSelect = document.getElementById('select-class');
-    var studentSelect = document.getElementById('select-student');
+        <p class="field-label">문항 수 선택</p>
+        <div class="chip-row" id="chip-row">
+          <div class="chip" data-count="5">5</div>
+          <div class="chip selected" data-count="10">10</div>
+          <div class="chip" data-count="20">20</div>
+          <div class="chip" data-count="0">전체</div>
+        </div>
 
-    classSelect.innerHTML = '';
-    studentSelect.innerHTML = '<option value="">-- 먼저 반을 선택하세요 --</option>';
-    studentSelect.disabled = true;
-    selectedStudent = null;
+        <div class="checklist">
+          <p>⚠ 시작 전 꼭 확인하세요</p>
+          <ul>
+            <li>카카오톡·인스타그램 인앱 브라우저 금지 (Chrome / Safari)</li>
+            <li>아이패드·아이폰은 반드시 Safari 사용</li>
+            <li>새 창(팝업)이 열리면 마이크 권한을 [허용]하세요</li>
+          </ul>
+        </div>
 
-    if (!grade) {
-      classSelect.innerHTML = '<option value="">-- 먼저 학년을 선택하세요 --</option>';
-      classSelect.disabled = true;
-      return;
-    }
+        <button class="btn btn-primary" id="btn-start">이 정보로 평가 준비하기</button>
+      </div>
+    </div>
 
-    var classes = [];
-    fullStudentList.forEach(function(s){
-      if (s.grade === grade && classes.indexOf(s.classNo) === -1) classes.push(s.classNo);
-    });
-    classes.sort();
-    classSelect.innerHTML = '<option value="">-- 반 선택 --</option>';
-    classes.forEach(function(c){
-      var opt = document.createElement('option');
-      opt.value = c; opt.textContent = c + '반';
-      classSelect.appendChild(opt);
-    });
-    classSelect.disabled = false;
-  });
+    <!-- ② 대기 화면 (실질적 평가는 팝업에서 진행) -->
+    <div class="view" id="view-waiting">
+      <div class="spacer"></div>
+      <div class="mic-orbit">
+        <div class="ring"></div><div class="ring"></div><div class="ring"></div>
+        <div class="mic-core">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round">
+            <path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3z"/>
+            <path d="M19 11a7 7 0 0 1-14 0"/><line x1="12" y1="18" x2="12" y2="22"/>
+          </svg>
+        </div>
+      </div>
+      <p class="status-line" id="waiting-text">새 창에서 평가가 진행 중입니다...</p>
+      <button class="btn btn-primary" id="btn-open-popup">🎙️ 마이크 권한 허용하고 평가 시작</button>
+      <button class="btn btn-ghost" id="btn-reopen" style="display:none;">평가 창이 안 보이면 다시 열기</button>
+      <div class="spacer"></div>
+    </div>
 
-  document.getElementById('select-class').addEventListener('change', function(){
-    var grade = document.getElementById('select-grade').value;
-    var classNo = this.value;
-    var studentSelect = document.getElementById('select-student');
+    <!-- ③ 결과 화면 -->
+    <div class="view" id="view-result">
+      <div class="card">
+        <div class="score-hero" id="score-hero-score">
+          <div class="num" id="score-num">0</div>
+          <div class="unit">점 / 100점 환산</div>
+        </div>
+        <div class="score-hero" id="score-hero-time" style="display:none;">
+          <div class="num" id="time-num">0:00</div>
+          <div class="unit">전체 문항 완료까지 걸린 시간</div>
+        </div>
+        <div class="stat-row" id="stat-row-score">
+          <div class="stat-box correct"><div class="n" id="stat-correct">0</div><div class="l">맞은 문항</div></div>
+          <div class="stat-box wrong"><div class="n" id="stat-wrong">0</div><div class="l">틀린 문항</div></div>
+          <div class="stat-box"><div class="n" id="stat-total">0</div><div class="l">전체 문항</div></div>
+        </div>
+        <div class="wrong-box" id="wrong-box" style="display:none;">
+          <p>❌ 틀린 문제</p>
+          <div class="tags" id="wrong-tags"></div>
+        </div>
+        <button class="btn btn-primary" id="btn-restart">처음으로 돌아가기</button>
+      </div>
+    </div>
+  </div>
 
-    studentSelect.innerHTML = '<option value="">-- 이름 선택 --</option>';
-    selectedStudent = null;
-
-    if (!classNo) {
-      studentSelect.innerHTML = '<option value="">-- 먼저 반을 선택하세요 --</option>';
-      studentSelect.disabled = true;
-      return;
-    }
-
-    var matched = fullStudentList.filter(function(s){ return s.grade === grade && s.classNo === classNo; });
-    matched.sort(function(a, b){ return a.id.localeCompare(b.id); });
-    matched.forEach(function(s){
-      var opt = document.createElement('option');
-      opt.value = s.id;
-      opt.textContent = s.name + ' (' + s.id + ')';
-      opt.dataset.name = s.name;
-      studentSelect.appendChild(opt);
-    });
-    studentSelect.disabled = false;
-  });
-
-  document.getElementById('select-student').addEventListener('change', function(){
-    var opt = this.options[this.selectedIndex];
-    selectedStudent = opt.value ? { id: opt.value, name: opt.dataset.name } : null;
-  });
-
-  var MODE_DESC = {
-    SCORE: '문항마다 제한시간 안에 맞히면 정답, 못 맞히면 오답으로 채점합니다.',
-    TIME: '제한시간 없이, 맞힐 때까지 계속 시도합니다. 전체 문항을 끝내는 데 걸린 총 시간을 기록합니다.'
-  };
-
-  document.querySelectorAll('#mode-row .chip').forEach(function(chip){
-    chip.addEventListener('click', function(){
-      document.querySelectorAll('#mode-row .chip').forEach(function(c){ c.classList.remove('selected'); });
-      chip.classList.add('selected');
-      selectedMode = chip.dataset.mode;
-      document.getElementById('mode-desc').textContent = MODE_DESC[selectedMode];
-    });
-  });
-
-  document.querySelectorAll('#chip-row .chip').forEach(function(chip){
-    chip.addEventListener('click', function(){
-      document.querySelectorAll('#chip-row .chip').forEach(function(c){ c.classList.remove('selected'); });
-      chip.classList.add('selected');
-      selectedCount = Number(chip.dataset.count); // 0 = 전체
-    });
-  });
-
-  document.getElementById('btn-start').addEventListener('click', function(){
-    clearError();
-    if (!selectedStudent) { showError('명단에서 본인 이름을 선택해주세요.'); return; }
-
-    var btn = this;
-    btn.disabled = true;
-    btn.textContent = '문항 준비 중...';
-
-    google.script.run
-      .withSuccessHandler(function(res){
-        btn.disabled = false;
-        btn.textContent = '이 정보로 평가 준비하기';
-        if (!res.success) { showError(res.message || '문항을 불러오지 못했습니다.'); return; }
-        quizData = res;
-        showView('view-waiting');
-      })
-      .withFailureHandler(function(err){
-        btn.disabled = false;
-        btn.textContent = '이 정보로 평가 준비하기';
-        showError('서버 오류가 발생했습니다: ' + err.message);
-      })
-      .getQuiz(selectedCount || 999);
-  });
-
-  /* ---------- ② 대기 화면 → 팝업 오픈 ---------- */
-
-  function openMicPopup(){
-    if (!MIC_PAGE_URL || !MIC_PAGE_ORIGIN) {
-      showError('환경설정 탭에 MIC_PAGE_URL / MIC_PAGE_ORIGIN 값이 없습니다. 시트를 확인해주세요.');
-      return;
-    }
-    // 팝업 차단 방지: 반드시 click 핸들러 내부에서 동기적으로 호출
-    popupRef = window.open(MIC_PAGE_URL, 'micQuiz', 'width=480,height=840');
-    if (!popupRef) {
-      document.getElementById('btn-reopen').style.display = 'block';
-      showError('팝업이 차단되었습니다. 브라우저의 팝업 차단을 해제하고 다시 시도해주세요.');
-      return;
-    }
-    document.getElementById('waiting-text').textContent = '팝업 창에서 마이크 권한을 허용해주세요...';
-    document.getElementById('btn-open-popup').style.display = 'none';
-    document.getElementById('btn-reopen').style.display = 'block';
-  }
-
-  document.getElementById('btn-open-popup').addEventListener('click', openMicPopup);
-  document.getElementById('btn-reopen').addEventListener('click', openMicPopup);
-
-  /* ---------- 팝업과의 postMessage 통신 ---------- */
-
-  window.addEventListener('message', function(evt){
-    if (evt.origin !== MIC_PAGE_ORIGIN) return; // 다른 출처 메시지는 무시 (보안)
-    var data = evt.data || {};
-
-    if (data.type === 'READY') {
-      popupRef.postMessage({
-        type: 'INIT',
-        quiz: quizData.quiz,
-        student: selectedStudent,
-        mode: selectedMode
-      }, MIC_PAGE_ORIGIN);
-      document.getElementById('waiting-text').textContent = '평가가 진행 중입니다. 팝업 창을 확인해주세요.';
-    }
-
-    if (data.type === 'DONE') {
-      lastResult = data.result; // { mode, correctCount?, totalCount, wrongQuestions?, elapsedSeconds? }
-      if (popupRef) popupRef.close();
-      submitFinalResult();
-    }
-  });
-
-  function submitFinalResult(){
-    var payload = Object.assign({}, lastResult, {
-      studentId: selectedStudent.id,
-      studentName: selectedStudent.name
-    });
-
-    google.script.run
-      .withSuccessHandler(function(res){
-        if (!res.success) { showError(res.message || '기록 저장에 실패했습니다.'); return; }
-        renderResult(res, lastResult);
-        showView('view-result');
-      })
-      .withFailureHandler(function(err){
-        showError('결과 저장 중 오류: ' + err.message);
-      })
-      .submitResult(payload);
-  }
-
-  /* ---------- ③ 결과 화면 ---------- */
-
-  function renderResult(res, result){
-    var isTime = res.mode === 'TIME';
-    document.getElementById('score-hero-score').style.display = isTime ? 'none' : 'block';
-    document.getElementById('score-hero-time').style.display = isTime ? 'block' : 'none';
-    document.getElementById('stat-row-score').style.display = isTime ? 'none' : 'flex';
-    document.getElementById('wrong-box').style.display = 'none';
-
-    if (isTime) {
-      var m = Math.floor(res.elapsedSeconds / 60);
-      var s = res.elapsedSeconds % 60;
-      document.getElementById('time-num').textContent = m + ':' + (s < 10 ? '0' : '') + s;
-      return;
-    }
-
-    document.getElementById('score-num').textContent = res.score;
-    document.getElementById('stat-correct').textContent = res.correct;
-    document.getElementById('stat-wrong').textContent = res.total - res.correct;
-    document.getElementById('stat-total').textContent = res.total;
-
-    var wrongBox = document.getElementById('wrong-box');
-    var wrongTags = document.getElementById('wrong-tags');
-    wrongTags.innerHTML = '';
-    if (result.wrongQuestions && result.wrongQuestions.length) {
-      wrongBox.style.display = 'block';
-      result.wrongQuestions.forEach(function(q){
-        var span = document.createElement('span');
-        span.className = 'tag';
-        span.textContent = q;
-        wrongTags.appendChild(span);
-      });
-    }
-  }
-
-  document.getElementById('btn-restart').addEventListener('click', function(){
-    location.reload();
-  });
-</script>
+  <script>
+    // "환경설정" 시트 값을 서버(doGet)에서 주입 — 클라이언트 코드는 이 값을 사용
+    var APP_CONFIG = <?!= JSON.stringify(config) ?>;
+  </script>
+  <?!= include('JavaScript'); ?>
+</body>
+</html>
