@@ -207,62 +207,55 @@
     document.getElementById('timer').style.display = mode === 'TIME' ? 'none' : 'inline';
     document.getElementById('elapsed-line').style.display = mode === 'TIME' ? 'block' : 'none';
 
-    // ⚠ 파형용 getUserMedia와 SpeechRecognition이 동시에 마이크를 요청하면
-    // 일부 브라우저에서 SpeechRecognition 쪽이 조용히 실패합니다.
-    // 반드시 파형 스트림 확보가 끝난 뒤(콜백) 문항을 시작합니다.
-    startWaveform(function(){
-      runQuestion();
-      if (mode === 'TIME') {
-        clearInterval(elapsedInterval);
-        elapsedInterval = setInterval(function(){
-          var sec = Math.round((Date.now() - startTimestamp) / 1000);
-          var m = Math.floor(sec / 60), s = sec % 60;
-          document.getElementById('elapsed-line').textContent = '경과 시간 ' + m + ':' + (s < 10 ? '0' : '') + s;
-        }, 1000);
-      }
-    });
+    startPulseLoop(); // 캔버스 애니메이션 루프 시작 (마이크를 별도로 열지 않음)
+    runQuestion();
+
+    if (mode === 'TIME') {
+      clearInterval(elapsedInterval);
+      elapsedInterval = setInterval(function(){
+        var sec = Math.round((Date.now() - startTimestamp) / 1000);
+        var m = Math.floor(sec / 60), s = sec % 60;
+        document.getElementById('elapsed-line').textContent = '경과 시간 ' + m + ':' + (s < 10 ? '0' : '') + s;
+      }, 1000);
+    }
   });
 
-  /* ---------- 실시간 음성 파형 시각화 ---------- */
+  /* ---------- 실시간 음성 파형(모사) 시각화 ----------
+   * ⚠ 별도의 getUserMedia로 마이크를 또 열면, 안드로이드 Chrome 등 일부 환경에서
+   *   SpeechRecognition이 오디오를 아예 못 받는 문제가 실제로 확인되었습니다.
+   *   그래서 마이크를 새로 열지 않고, SpeechRecognition 자신이 쏘는
+   *   onsoundstart(소리 감지)/onsoundend(소리 끊김) 이벤트로 막대를 움직입니다.
+   *   → 마이크 소비자가 SpeechRecognition 단 하나뿐이라 충돌 자체가 불가능합니다.
+   */
 
-  var audioCtx, analyser, waveformStream, waveformRAF;
+  var soundActive = false;
+  var waveformRAF = null;
 
-  function startWaveform(onReady){
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { if (onReady) onReady(); return; }
-    navigator.mediaDevices.getUserMedia({ audio: true }).then(function(stream){
-      waveformStream = stream;
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      var source = audioCtx.createMediaStreamSource(stream);
-      analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 64;
-      source.connect(analyser);
-      drawWaveform();
-      if (onReady) onReady();
-    }).catch(function(){
-      // 파형 실패해도 음성인식 자체는 시도할 수 있으므로 그대로 진행
-      if (onReady) onReady();
-    });
-  }
+  function setSoundActive(v){ soundActive = v; }
 
-  function drawWaveform(){
+  function startPulseLoop(){
     var canvas = document.getElementById('wave-canvas');
     var ctx = canvas.getContext('2d');
     var dpr = window.devicePixelRatio || 1;
     canvas.width = canvas.clientWidth * dpr;
     canvas.height = canvas.clientHeight * dpr;
-    var data = new Uint8Array(analyser.frequencyBinCount);
+    var barCount = 24;
+    var phase = 0;
 
+    cancelAnimationFrame(waveformRAF);
     (function loop(){
       waveformRAF = requestAnimationFrame(loop);
-      analyser.getByteFrequencyData(data);
+      phase += 0.18;
       var w = canvas.width, h = canvas.height;
       ctx.clearRect(0, 0, w, h);
-      var barCount = data.length;
       var barWidth = w / barCount * 0.6;
       var gap = w / barCount * 0.4;
       ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--primary').trim() || '#5B4FE9';
       for (var i = 0; i < barCount; i++) {
-        var barH = Math.max(3 * dpr, (data[i] / 255) * h);
+        var base = soundActive
+          ? (0.35 + 0.6 * Math.abs(Math.sin(phase + i * 0.7)) * (0.6 + 0.4 * Math.random()))
+          : (0.08 + 0.04 * Math.abs(Math.sin(phase * 0.5 + i)));
+        var barH = Math.max(3 * dpr, base * h);
         var x = i * (barWidth + gap);
         var y = (h - barH) / 2;
         ctx.beginPath();
@@ -274,8 +267,6 @@
 
   function stopWaveform(){
     if (waveformRAF) cancelAnimationFrame(waveformRAF);
-    if (waveformStream) waveformStream.getTracks().forEach(function(t){ t.stop(); });
-    if (audioCtx) { try { audioCtx.close(); } catch (e) {} }
   }
 
   /* ---------- 문항 진행 ---------- */
@@ -353,6 +344,10 @@
     };
 
     recognition.onerror = function(){ /* no-speech 등은 onend에서 재시동 처리 */ };
+
+    recognition.onsoundstart = function(){ setSoundActive(true); };
+    recognition.onsoundend   = function(){ setSoundActive(false); };
+    recognition.onaudioend   = function(){ setSoundActive(false); };
 
     try { recognition.start(); } catch (e) {}
   }
