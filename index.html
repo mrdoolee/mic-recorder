@@ -1,187 +1,375 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>마이크 녹음</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>음성 발음 평가</title>
 <style>
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: #f4f4f4;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 100vh;
-    margin: 0;
-    text-align: center;
-    padding: 20px;
-    box-sizing: border-box;
+  @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css');
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&display=swap');
+
+  :root{
+    --ink:#1C1B29; --ink-soft:#6B6880; --paper:#F6F5FB; --surface:#FFFFFF;
+    --primary:#5B4FE9; --primary-dark:#4238C4; --primary-soft:#EDEBFC;
+    --success:#16B978; --success-soft:#E3FAF0;
+    --alert:#FF5470; --alert-soft:#FFE8EC;
+    --border:#E7E5F3; --radius-lg:24px; --radius-md:16px;
+    --font-ui:'Pretendard', -apple-system, sans-serif;
+    --font-symbol:'Space Grotesk', var(--font-ui);
   }
-  h1 { font-size: 20px; margin-bottom: 8px; }
-  p.desc { color: #666; font-size: 14px; margin-bottom: 24px; }
-  #timer { font-size: 32px; font-weight: 600; margin-bottom: 24px; color: #2F6F62; }
-  button {
-    font-size: 16px;
-    padding: 16px 32px;
-    border-radius: 999px;
-    border: none;
-    cursor: pointer;
-    font-weight: 600;
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; background:var(--paper); color:var(--ink); font-family:var(--font-ui); min-height:100vh; }
+  .shell{ max-width:480px; margin:0 auto; min-height:100vh; display:flex; flex-direction:column; padding:24px 20px 32px; }
+  .view{ display:none; flex:1; flex-direction:column; }
+  .view.active{ display:flex; animation:rise .4s cubic-bezier(.16,1,.3,1); }
+  @keyframes rise{ from{opacity:0; transform:translateY(12px);} to{opacity:1; transform:translateY(0);} }
+  .spacer{ flex:1; }
+
+  /* 준비 화면 */
+  .ready-mic{ width:120px; height:120px; margin:0 auto 20px; border-radius:50%;
+    background:var(--primary-soft); display:flex; align-items:center; justify-content:center; }
+  .ready-mic svg{ width:44px; height:44px; }
+  h1{ font-size:22px; text-align:center; margin:0 0 8px; }
+  p.desc{ text-align:center; color:var(--ink-soft); font-size:14px; line-height:1.6; margin:0 0 28px; }
+  .btn{ width:100%; border:none; border-radius:var(--radius-md); padding:16px; font-size:16px;
+    font-weight:700; font-family:var(--font-ui); cursor:pointer; }
+  .btn-start{ background:var(--success); color:#fff; box-shadow:0 12px 24px -10px rgba(22,185,120,.55);
+    animation:pulse 1.8s ease-in-out infinite; }
+  @keyframes pulse{ 0%,100%{ box-shadow:0 12px 24px -10px rgba(22,185,120,.55);} 50%{ box-shadow:0 16px 30px -8px rgba(22,185,120,.8);} }
+  .btn-secondary{ background:transparent; border:1.5px solid var(--border); color:var(--ink-soft); margin-top:10px; }
+
+  /* 퀴즈 화면 */
+  .progress-row{ display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; }
+  .progress-count{ font-family:var(--font-symbol); font-weight:600; font-size:14px; color:var(--ink-soft); }
+  .timer{ font-family:var(--font-symbol); font-weight:700; font-size:16px; color:var(--primary); }
+  .timer.warn{ color:var(--alert); }
+  .progress-bar{ height:5px; background:var(--border); border-radius:3px; margin-bottom:32px; overflow:hidden; }
+  .progress-fill{ height:100%; background:var(--primary); border-radius:3px; transition:width .3s ease; }
+
+  .hero-card{
+    flex:1; display:flex; align-items:center; justify-content:center;
+    background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg);
+    box-shadow:0 20px 40px -22px rgba(28,27,41,.25); margin-bottom:22px; min-height:220px;
   }
-  #recordBtn {
-    background: #2F6F62;
-    color: white;
+  .hero-word{ font-family:var(--font-symbol); font-size:60px; font-weight:700; letter-spacing:-.01em; }
+  .hero-card.flip{ animation:flip .35s ease; }
+  @keyframes flip{ 0%{ transform:rotateX(0);} 50%{ transform:rotateX(90deg); opacity:.3;} 100%{ transform:rotateX(0); opacity:1;} }
+
+  .badge{
+    text-align:center; padding:12px; border-radius:var(--radius-md); font-weight:700; font-size:14.5px;
+    margin-bottom:14px; background:var(--primary-soft); color:var(--primary-dark);
+    transition:background .2s, color .2s;
   }
-  #recordBtn.recording {
-    background: #C0392B;
+  .badge.listening{ background:var(--primary-soft); color:var(--primary-dark); }
+  .badge.correct{ background:var(--success-soft); color:#0B8F5C; }
+  .badge.wrong{ background:var(--alert-soft); color:#B4223B; }
+
+  .wave-wrap{
+    height:56px; display:flex; align-items:center; justify-content:center; gap:3px;
+    margin-bottom:16px; padding:0 8px;
   }
-  #status {
-    margin-top: 16px;
-    font-size: 13px;
-    color: #999;
+  .wave-wrap canvas{ width:100%; height:100%; }
+
+  .elapsed-line{
+    text-align:center; font-family:var(--font-symbol); font-weight:700; font-size:15px;
+    color:var(--ink-soft); margin-bottom:14px;
   }
-  #errorBox {
-    margin-top: 16px;
-    color: #C0392B;
-    font-size: 13px;
-    max-width: 320px;
-  }
+
+  .btn-restart-mic{ background:transparent; border:1.5px dashed var(--border); color:var(--ink-soft);
+    font-size:13.5px; padding:12px; border-radius:var(--radius-md); }
+
+  /* 종료 화면 */
+  .done-wrap{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  .spinner{ width:36px; height:36px; border:3px solid var(--border); border-top-color:var(--primary);
+    border-radius:50%; animation:spin .8s linear infinite; margin-bottom:16px; }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
 </style>
 </head>
 <body>
-  <h1>마이크 녹음</h1>
-  <p class="desc">녹음이 끝나면 이 창은 자동으로 닫히고<br>원래 화면으로 돌아갑니다.</p>
-  <div id="timer">00:00</div>
-  <button id="recordBtn">녹음 시작</button>
-  <div id="status"></div>
-  <div id="errorBox"></div>
+<div class="shell">
+
+  <!-- 대기: opener 연결 전 -->
+  <div class="view active" id="view-connecting">
+    <div class="spacer"></div>
+    <div class="done-wrap">
+      <div class="spinner"></div>
+      <p class="desc">평가 정보를 불러오는 중입니다...</p>
+    </div>
+    <div class="spacer"></div>
+  </div>
+
+  <!-- 마이크 예열 -->
+  <div class="view" id="view-ready">
+    <div class="spacer"></div>
+    <div class="ready-mic">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#5B4FE9" stroke-width="2" stroke-linecap="round">
+        <path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3z"/>
+        <path d="M19 11a7 7 0 0 1-14 0"/><line x1="12" y1="18" x2="12" y2="22"/>
+      </svg>
+    </div>
+    <h1 id="ready-title">평가 준비 완료</h1>
+    <p class="desc">버튼을 누르면 마이크 권한 요청 창이 뜹니다.<br>반드시 [허용]을 눌러주세요.</p>
+    <button class="btn btn-start" id="btn-mic-start">🎙️ 마이크 권한 허용하고 평가 시작</button>
+    <div class="spacer"></div>
+  </div>
+
+  <!-- 실시간 평가 -->
+  <div class="view" id="view-quiz">
+    <div class="progress-row">
+      <span class="progress-count" id="progress-count">문항 1 / 10</span>
+      <span class="timer" id="timer">⏱️ 5초</span>
+    </div>
+    <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+
+    <div class="hero-card" id="hero-card">
+      <span class="hero-word" id="hero-word">-</span>
+    </div>
+
+    <div class="elapsed-line" id="elapsed-line" style="display:none;">경과 시간 0:00</div>
+    <div class="badge listening" id="badge">🎙️ 말하세요!</div>
+    <div class="wave-wrap"><canvas id="wave-canvas"></canvas></div>
+    <button class="btn btn-restart-mic" id="btn-mic-restart">🔄 마이크 인식이 안 되나요? (재시동)</button>
+  </div>
+
+  <!-- 종료 -->
+  <div class="view" id="view-finish">
+    <div class="spacer"></div>
+    <div class="done-wrap">
+      <div class="spinner"></div>
+      <p class="desc">채점 결과를 전송하는 중입니다...</p>
+    </div>
+    <div class="spacer"></div>
+  </div>
+
+</div>
 
 <script>
-(function () {
-  'use strict';
+  var PARENT_ORIGIN = null; // opener로부터 첫 메시지를 받을 때 origin을 기록해 이후 검증에 사용
+  var quiz = [];
+  var student = null;
+  var idx = 0;
+  var mode = 'SCORE'; // 'SCORE' | 'TIME'
+  var correctCount = 0;
+  var wrongQuestions = [];
+  var recognition = null;
+  var timerInterval = null;
+  var elapsedInterval = null;
+  var timeLeft = 5;
+  var questionFinalized = false;
+  var startTimestamp = null;
 
-  let mediaRecorder = null;
-  let audioChunks = [];
-  let stream = null;
-  let seconds = 0;
-  let timerId = null;
-  let isRecording = false;
-
-  const recordBtn = document.getElementById('recordBtn');
-  const timerEl = document.getElementById('timer');
-  const statusEl = document.getElementById('status');
-  const errorBox = document.getElementById('errorBox');
-
-  function formatTime(sec) {
-    const m = String(Math.floor(sec / 60)).padStart(2, '0');
-    const s = String(sec % 60).padStart(2, '0');
-    return `${m}:${s}`;
+  function showView(id){
+    document.querySelectorAll('.view').forEach(function(v){ v.classList.remove('active'); });
+    document.getElementById(id).classList.add('active');
   }
 
-  function blobToBase64(blob) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result.split(',')[1]);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
+  /* ---------- 부모 창(WebApp-A)과 통신 ---------- */
+
+  window.addEventListener('message', function(evt){
+    var data = evt.data || {};
+    if (data.type === 'INIT') {
+      PARENT_ORIGIN = evt.origin; // 최초 INIT을 보낸 출처를 신뢰 출처로 고정
+      quiz = data.quiz || [];
+      student = data.student || {};
+      mode = data.mode === 'TIME' ? 'TIME' : 'SCORE';
+      document.getElementById('ready-title').textContent = (student.name || '') + '님, 평가 준비 완료';
+      showView('view-ready');
+    }
+  });
+
+  window.addEventListener('load', function(){
+    if (window.opener) {
+      // opener의 origin을 아직 모르므로 '*'로 READY만 알림 (INIT 수신 시 origin 고정)
+      window.opener.postMessage({ type: 'READY' }, '*');
+    }
+  });
+
+  function sendDone(){
+    stopWaveform();
+    var result = mode === 'TIME'
+      ? { mode: 'TIME', totalCount: quiz.length, elapsedSeconds: Math.round((Date.now() - startTimestamp) / 1000) }
+      : { mode: 'SCORE', correctCount: correctCount, totalCount: quiz.length, wrongQuestions: wrongQuestions };
+    showView('view-finish');
+    if (window.opener && PARENT_ORIGIN) {
+      window.opener.postMessage({ type: 'DONE', result: result }, PARENT_ORIGIN);
+    }
+  }
+
+  /* ---------- 마이크 예열 ---------- */
+
+  document.getElementById('btn-mic-start').addEventListener('click', function(){
+    idx = 0; correctCount = 0; wrongQuestions = [];
+    startTimestamp = Date.now();
+    showView('view-quiz');
+
+    // 타이머/경과시간 UI를 모드에 맞게 전환
+    document.getElementById('timer').style.display = mode === 'TIME' ? 'none' : 'inline';
+    document.getElementById('elapsed-line').style.display = mode === 'TIME' ? 'block' : 'none';
+
+    startWaveform(); // 사용자 클릭(제스처) 안에서 마이크 스트림 요청
+    runQuestion();
+
+    if (mode === 'TIME') {
+      clearInterval(elapsedInterval);
+      elapsedInterval = setInterval(function(){
+        var sec = Math.round((Date.now() - startTimestamp) / 1000);
+        var m = Math.floor(sec / 60), s = sec % 60;
+        document.getElementById('elapsed-line').textContent = '경과 시간 ' + m + ':' + (s < 10 ? '0' : '') + s;
+      }, 1000);
+    }
+  });
+
+  /* ---------- 실시간 음성 파형 시각화 ---------- */
+
+  var audioCtx, analyser, waveformStream, waveformRAF;
+
+  function startWaveform(){
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function(stream){
+      waveformStream = stream;
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      var source = audioCtx.createMediaStreamSource(stream);
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 64;
+      source.connect(analyser);
+      drawWaveform();
+    }).catch(function(){
+      // 마이크 권한 거부 시에도 음성인식(recognition)은 별도로 재요청되므로 파형만 비활성화
     });
   }
 
-  async function startRecording() {
-    errorBox.textContent = '';
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (err) {
-      errorBox.textContent = `마이크 오류 [${err.name}]: ${err.message}`;
-      return;
-    }
+  function drawWaveform(){
+    var canvas = document.getElementById('wave-canvas');
+    var ctx = canvas.getContext('2d');
+    var dpr = window.devicePixelRatio || 1;
+    canvas.width = canvas.clientWidth * dpr;
+    canvas.height = canvas.clientHeight * dpr;
+    var data = new Uint8Array(analyser.frequencyBinCount);
 
-    audioChunks = [];
-
-    // [수정] Cloud STT 연동을 위해 WebM(Opus) 코덱으로 고정
-    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-      ? 'audio/webm;codecs=opus' : 'audio/webm';
-
-    // [수정] Cloud STT 음성 인식에 최적화된 비트레이트 (24kbps)
-    try {
-      mediaRecorder = new MediaRecorder(stream, {
-        mimeType,
-        audioBitsPerSecond: 24000
-      });
-    } catch (e) {
-      // 옵션 지원 에러 시 폴백
-      mediaRecorder = new MediaRecorder(stream);
-    }
-
-    mediaRecorder.ondataavailable = e => {
-      if (e.data.size > 0) audioChunks.push(e.data);
-    };
-
-    mediaRecorder.onstop = async () => {
-      const finalMimeType = mediaRecorder.mimeType || mimeType;
-      const audioBlob = new Blob(audioChunks, { type: finalMimeType });
-      const base64Data = await blobToBase64(audioBlob);
-
-      statusEl.textContent = '전달 중이에요…';
-
-      // [유지] 팝업 창과 iframe 매립 방식을 모두 지원 (GAS 연동 시 필수)
-      const targetWindow = window.opener || window.parent;
-      if (targetWindow && targetWindow !== window) {
-        targetWindow.postMessage({
-          type: 'recording-complete',
-          base64Data,
-          mimeType: finalMimeType
-        }, '*'); 
+    (function loop(){
+      waveformRAF = requestAnimationFrame(loop);
+      analyser.getByteFrequencyData(data);
+      var w = canvas.width, h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+      var barCount = data.length;
+      var barWidth = w / barCount * 0.6;
+      var gap = w / barCount * 0.4;
+      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--primary').trim() || '#5B4FE9';
+      for (var i = 0; i < barCount; i++) {
+        var barH = Math.max(3 * dpr, (data[i] / 255) * h);
+        var x = i * (barWidth + gap);
+        var y = (h - barH) / 2;
+        ctx.beginPath();
+        if (ctx.roundRect) { ctx.roundRect(x, y, barWidth, barH, 3 * dpr); ctx.fill(); }
+        else { ctx.fillRect(x, y, barWidth, barH); }
       }
+    })();
+  }
 
-      // [유지] window.close() 브라우저 보안 차단 방어 로직
-      setTimeout(() => {
-        window.close();
-        statusEl.textContent = '전달 완료! 창이 닫히지 않으면 직접 닫아주세요.';
-        recordBtn.style.display = 'none';
-      }, 500);
+  function stopWaveform(){
+    if (waveformRAF) cancelAnimationFrame(waveformRAF);
+    if (waveformStream) waveformStream.getTracks().forEach(function(t){ t.stop(); });
+    if (audioCtx) { try { audioCtx.close(); } catch (e) {} }
+  }
+
+  /* ---------- 문항 진행 ---------- */
+
+  function normalize(s){
+    return String(s || '').replace(/\s+/g, '').toLowerCase();
+  }
+
+  function runQuestion(){
+    if (idx >= quiz.length) { clearInterval(elapsedInterval); sendDone(); return; }
+    var item = quiz[idx];
+    questionFinalized = false;
+
+    document.getElementById('progress-count').textContent = '문항 ' + (idx + 1) + ' / ' + quiz.length;
+    document.getElementById('progress-fill').style.width = Math.round((idx / quiz.length) * 100) + '%';
+
+    var hero = document.getElementById('hero-card');
+    hero.classList.remove('flip'); void hero.offsetWidth; hero.classList.add('flip');
+    document.getElementById('hero-word').textContent = item.question;
+
+    setBadge('listening', '🎙️ 말하세요!');
+
+    if (mode === 'SCORE') {
+      timeLeft = item.timeLimit || 5;
+      updateTimerUI();
+      clearInterval(timerInterval);
+      timerInterval = setInterval(function(){
+        timeLeft--;
+        updateTimerUI();
+        if (timeLeft <= 0) { clearInterval(timerInterval); finalizeQuestion(false, item); }
+      }, 1000);
+    }
+    // TIME 모드는 제한시간 없이 정답이 나올 때까지 계속 듣습니다.
+
+    startRecognition(item);
+  }
+
+  function updateTimerUI(){
+    var t = document.getElementById('timer');
+    t.textContent = '⏱️ ' + timeLeft + '초';
+    t.classList.toggle('warn', timeLeft <= 2);
+  }
+
+  function setBadge(state, text){
+    var b = document.getElementById('badge');
+    b.className = 'badge ' + state;
+    b.textContent = text;
+  }
+
+  function startRecognition(item){
+    var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { setBadge('wrong', '⚠️ 이 브라우저는 음성 인식을 지원하지 않습니다'); return; }
+
+    recognition = new SR();
+    recognition.lang = 'ko-KR';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 3;
+
+    recognition.onresult = function(evt){
+      if (questionFinalized) return;
+      for (var i = 0; i < evt.results[0].length; i++) {
+        var said = normalize(evt.results[0][i].transcript);
+        var isMatch = item.answers.some(function(ans){ return normalize(ans) === said; });
+        if (isMatch) { finalizeQuestion(true, item); return; }
+      }
     };
 
-    mediaRecorder.start();
+    recognition.onend = function(){
+      // 침묵 등으로 엔진이 종료돼도, 문항이 아직 안 끝났으면 자동 재시동
+      var stillWaiting = mode === 'TIME' ? !questionFinalized : (!questionFinalized && timeLeft > 0);
+      if (stillWaiting) { try { recognition.start(); } catch (e) {} }
+    };
 
-    seconds = 0;
-    timerEl.textContent = formatTime(0);
-    timerId = setInterval(() => {
-      seconds++;
-      timerEl.textContent = formatTime(seconds);
-    }, 1000);
+    recognition.onerror = function(){ /* no-speech 등은 onend에서 재시동 처리 */ };
 
-    isRecording = true;
-    recordBtn.textContent = '녹음 종료';
-    recordBtn.classList.add('recording');
-    statusEl.textContent = '녹음 중이에요…';
+    try { recognition.start(); } catch (e) {}
   }
 
-  function stopRecording() {
-    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-      mediaRecorder.stop();
-    }
-    if (stream) stream.getTracks().forEach(t => t.stop());
-    clearInterval(timerId);
+  document.getElementById('btn-mic-restart').addEventListener('click', function(){
+    if (recognition) { try { recognition.stop(); } catch (e) {} }
+    var item = quiz[idx];
+    if (!questionFinalized) startRecognition(item);
+  });
 
-    isRecording = false;
-    recordBtn.textContent = '녹음 시작';
-    recordBtn.classList.remove('recording');
-  }
+  function finalizeQuestion(isCorrect, item){
+    if (questionFinalized) return;
+    questionFinalized = true;
+    clearInterval(timerInterval);
+    if (recognition) { try { recognition.onend = null; recognition.stop(); } catch (e) {} }
 
-  recordBtn.addEventListener('click', () => {
-    if (isRecording) {
-      stopRecording();
+    if (isCorrect) {
+      correctCount++;
+      setBadge('correct', '⭕ 정답! (' + item.answers[0] + ')');
     } else {
-      startRecording();
+      wrongQuestions.push(item.question);
+      setBadge('wrong', '❌ 시간 초과! (정답: ' + item.answers.join(', ') + ')');
     }
-  });
 
-  window.addEventListener('beforeunload', () => {
-    if (stream) stream.getTracks().forEach(t => t.stop());
-  });
-})();
+    setTimeout(function(){ idx++; runQuestion(); }, isCorrect ? 700 : 1200);
+  }
 </script>
 </body>
 </html>
