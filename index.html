@@ -278,7 +278,24 @@
   /* ---------- 문항 진행 ---------- */
 
   function normalize(s){
-    return String(s || '').replace(/\s+/g, '').toLowerCase();
+    // 공백, 마침표/쉼표/물음표/느낌표 등 문장부호를 전부 제거하고 소문자로 비교
+    // (\p{L}=문자, \p{N}=숫자 — 이 둘이 아닌 문자는 전부 제거)
+    return String(s || '').replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
+  }
+
+  /**
+   * 발화 전체가 정답과 똑같은 경우뿐 아니라,
+   * "수소 수소 수소"처럼 정답 단어가 반복/추가 발화된 경우도 정답으로 인정합니다.
+   * (발화를 공백 기준으로 나눈 단어들 중 하나라도 정답과 일치하면 통과)
+   */
+  function isAnswerMatch(transcript, answers){
+    var full = normalize(transcript);
+    var words = String(transcript || '').split(/\s+/).map(normalize).filter(Boolean);
+    return answers.some(function(ans){
+      var a = normalize(ans);
+      if (!a) return false;
+      return full === a || words.indexOf(a) !== -1;
+    });
   }
 
   function runQuestion(){
@@ -337,9 +354,8 @@
       var heard = evt.results[0][0].transcript;
       lastHeard = heard; // 인식은 됐으나 정답과 불일치할 경우 진단용으로 표시
       for (var i = 0; i < evt.results[0].length; i++) {
-        var said = normalize(evt.results[0][i].transcript);
-        var isMatch = item.answers.some(function(ans){ return normalize(ans) === said; });
-        if (isMatch) { finalizeQuestion(true, item); return; }
+        var alt = evt.results[0][i].transcript;
+        if (isAnswerMatch(alt, item.answers)) { finalizeQuestion(true, item); return; }
       }
     };
 
