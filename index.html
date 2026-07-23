@@ -157,6 +157,7 @@
   var timeLeft = 5;
   var questionFinalized = false;
   var startTimestamp = null;
+  var lastHeard = '';
 
   function showView(id){
     document.querySelectorAll('.view').forEach(function(v){ v.classList.remove('active'); });
@@ -206,25 +207,28 @@
     document.getElementById('timer').style.display = mode === 'TIME' ? 'none' : 'inline';
     document.getElementById('elapsed-line').style.display = mode === 'TIME' ? 'block' : 'none';
 
-    startWaveform(); // 사용자 클릭(제스처) 안에서 마이크 스트림 요청
-    runQuestion();
-
-    if (mode === 'TIME') {
-      clearInterval(elapsedInterval);
-      elapsedInterval = setInterval(function(){
-        var sec = Math.round((Date.now() - startTimestamp) / 1000);
-        var m = Math.floor(sec / 60), s = sec % 60;
-        document.getElementById('elapsed-line').textContent = '경과 시간 ' + m + ':' + (s < 10 ? '0' : '') + s;
-      }, 1000);
-    }
+    // ⚠ 파형용 getUserMedia와 SpeechRecognition이 동시에 마이크를 요청하면
+    // 일부 브라우저에서 SpeechRecognition 쪽이 조용히 실패합니다.
+    // 반드시 파형 스트림 확보가 끝난 뒤(콜백) 문항을 시작합니다.
+    startWaveform(function(){
+      runQuestion();
+      if (mode === 'TIME') {
+        clearInterval(elapsedInterval);
+        elapsedInterval = setInterval(function(){
+          var sec = Math.round((Date.now() - startTimestamp) / 1000);
+          var m = Math.floor(sec / 60), s = sec % 60;
+          document.getElementById('elapsed-line').textContent = '경과 시간 ' + m + ':' + (s < 10 ? '0' : '') + s;
+        }, 1000);
+      }
+    });
   });
 
   /* ---------- 실시간 음성 파형 시각화 ---------- */
 
   var audioCtx, analyser, waveformStream, waveformRAF;
 
-  function startWaveform(){
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+  function startWaveform(onReady){
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { if (onReady) onReady(); return; }
     navigator.mediaDevices.getUserMedia({ audio: true }).then(function(stream){
       waveformStream = stream;
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -233,8 +237,10 @@
       analyser.fftSize = 64;
       source.connect(analyser);
       drawWaveform();
+      if (onReady) onReady();
     }).catch(function(){
-      // 마이크 권한 거부 시에도 음성인식(recognition)은 별도로 재요청되므로 파형만 비활성화
+      // 파형 실패해도 음성인식 자체는 시도할 수 있으므로 그대로 진행
+      if (onReady) onReady();
     });
   }
 
@@ -282,6 +288,7 @@
     if (idx >= quiz.length) { clearInterval(elapsedInterval); sendDone(); return; }
     var item = quiz[idx];
     questionFinalized = false;
+    lastHeard = '';
 
     document.getElementById('progress-count').textContent = '문항 ' + (idx + 1) + ' / ' + quiz.length;
     document.getElementById('progress-fill').style.width = Math.round((idx / quiz.length) * 100) + '%';
@@ -330,6 +337,8 @@
 
     recognition.onresult = function(evt){
       if (questionFinalized) return;
+      var heard = evt.results[0][0].transcript;
+      lastHeard = heard; // 인식은 됐으나 정답과 불일치할 경우 진단용으로 표시
       for (var i = 0; i < evt.results[0].length; i++) {
         var said = normalize(evt.results[0][i].transcript);
         var isMatch = item.answers.some(function(ans){ return normalize(ans) === said; });
@@ -365,7 +374,8 @@
       setBadge('correct', '⭕ 정답! (' + item.answers[0] + ')');
     } else {
       wrongQuestions.push(item.question);
-      setBadge('wrong', '❌ 시간 초과! (정답: ' + item.answers.join(', ') + ')');
+      var heardNote = lastHeard ? ('인식된 발음: "' + lastHeard + '"') : '마이크에 아무 소리도 인식되지 않음';
+      setBadge('wrong', '❌ 시간 초과! (정답: ' + item.answers.join(', ') + ') · ' + heardNote);
     }
 
     setTimeout(function(){ idx++; runQuestion(); }, isCorrect ? 700 : 1200);
