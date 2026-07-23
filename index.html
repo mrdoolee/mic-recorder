@@ -1,380 +1,254 @@
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>음성 발음 평가</title>
-<style>
-  @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css');
-  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&display=swap');
-
-  :root{
-    --ink:#1C1B29; --ink-soft:#6B6880; --paper:#F6F5FB; --surface:#FFFFFF;
-    --primary:#5B4FE9; --primary-dark:#4238C4; --primary-soft:#EDEBFC;
-    --success:#16B978; --success-soft:#E3FAF0;
-    --alert:#FF5470; --alert-soft:#FFE8EC;
-    --border:#E7E5F3; --radius-lg:24px; --radius-md:16px;
-    --font-ui:'Pretendard', -apple-system, sans-serif;
-    --font-symbol:'Space Grotesk', var(--font-ui);
-  }
-  *{ box-sizing:border-box; }
-  html,body{ margin:0; background:var(--paper); color:var(--ink); font-family:var(--font-ui); min-height:100vh; }
-  .shell{ max-width:480px; margin:0 auto; min-height:100vh; display:flex; flex-direction:column; padding:24px 20px 32px; }
-  .view{ display:none; flex:1; flex-direction:column; }
-  .view.active{ display:flex; animation:rise .4s cubic-bezier(.16,1,.3,1); }
-  @keyframes rise{ from{opacity:0; transform:translateY(12px);} to{opacity:1; transform:translateY(0);} }
-  .spacer{ flex:1; }
-
-  /* 준비 화면 */
-  .ready-mic{ width:120px; height:120px; margin:0 auto 20px; border-radius:50%;
-    background:var(--primary-soft); display:flex; align-items:center; justify-content:center; }
-  .ready-mic svg{ width:44px; height:44px; }
-  h1{ font-size:22px; text-align:center; margin:0 0 8px; }
-  p.desc{ text-align:center; color:var(--ink-soft); font-size:14px; line-height:1.6; margin:0 0 28px; }
-  .btn{ width:100%; border:none; border-radius:var(--radius-md); padding:16px; font-size:16px;
-    font-weight:700; font-family:var(--font-ui); cursor:pointer; }
-  .btn-start{ background:var(--success); color:#fff; box-shadow:0 12px 24px -10px rgba(22,185,120,.55);
-    animation:pulse 1.8s ease-in-out infinite; }
-  @keyframes pulse{ 0%,100%{ box-shadow:0 12px 24px -10px rgba(22,185,120,.55);} 50%{ box-shadow:0 16px 30px -8px rgba(22,185,120,.8);} }
-  .btn-secondary{ background:transparent; border:1.5px solid var(--border); color:var(--ink-soft); margin-top:10px; }
-
-  /* 퀴즈 화면 */
-  .progress-row{ display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; }
-  .progress-count{ font-family:var(--font-symbol); font-weight:600; font-size:14px; color:var(--ink-soft); }
-  .timer{ font-family:var(--font-symbol); font-weight:700; font-size:16px; color:var(--primary); }
-  .timer.warn{ color:var(--alert); }
-  .progress-bar{ height:5px; background:var(--border); border-radius:3px; margin-bottom:32px; overflow:hidden; }
-  .progress-fill{ height:100%; background:var(--primary); border-radius:3px; transition:width .3s ease; }
-
-  .hero-card{
-    flex:1; display:flex; align-items:center; justify-content:center;
-    background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg);
-    box-shadow:0 20px 40px -22px rgba(28,27,41,.25); margin-bottom:22px; min-height:220px;
-  }
-  .hero-word{ font-family:var(--font-symbol); font-size:60px; font-weight:700; letter-spacing:-.01em; }
-  .hero-card.flip{ animation:flip .35s ease; }
-  @keyframes flip{ 0%{ transform:rotateX(0);} 50%{ transform:rotateX(90deg); opacity:.3;} 100%{ transform:rotateX(0); opacity:1;} }
-
-  .badge{
-    text-align:center; padding:12px; border-radius:var(--radius-md); font-weight:700; font-size:14.5px;
-    margin-bottom:14px; background:var(--primary-soft); color:var(--primary-dark);
-    transition:background .2s, color .2s;
-  }
-  .badge.listening{ background:var(--primary-soft); color:var(--primary-dark); }
-  .badge.correct{ background:var(--success-soft); color:#0B8F5C; }
-  .badge.wrong{ background:var(--alert-soft); color:#B4223B; }
-
-  .wave-wrap{
-    height:56px; display:flex; align-items:center; justify-content:center; gap:3px;
-    margin-bottom:16px; padding:0 8px;
-  }
-  .wave-wrap canvas{ width:100%; height:100%; }
-
-  .elapsed-line{
-    text-align:center; font-family:var(--font-symbol); font-weight:700; font-size:15px;
-    color:var(--ink-soft); margin-bottom:14px;
-  }
-
-  .btn-restart-mic{ background:transparent; border:1.5px dashed var(--border); color:var(--ink-soft);
-    font-size:13.5px; padding:12px; border-radius:var(--radius-md); }
-
-  /* 종료 화면 */
-  .done-wrap{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; }
-  .spinner{ width:36px; height:36px; border:3px solid var(--border); border-top-color:var(--primary);
-    border-radius:50%; animation:spin .8s linear infinite; margin-bottom:16px; }
-  @keyframes spin{ to{ transform:rotate(360deg); } }
-</style>
-</head>
-<body>
-<div class="shell">
-
-  <!-- 대기: opener 연결 전 -->
-  <div class="view active" id="view-connecting">
-    <div class="spacer"></div>
-    <div class="done-wrap">
-      <div class="spinner"></div>
-      <p class="desc">평가 정보를 불러오는 중입니다...</p>
-    </div>
-    <div class="spacer"></div>
-  </div>
-
-  <!-- 마이크 예열 -->
-  <div class="view" id="view-ready">
-    <div class="spacer"></div>
-    <div class="ready-mic">
-      <svg viewBox="0 0 24 24" fill="none" stroke="#5B4FE9" stroke-width="2" stroke-linecap="round">
-        <path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3z"/>
-        <path d="M19 11a7 7 0 0 1-14 0"/><line x1="12" y1="18" x2="12" y2="22"/>
-      </svg>
-    </div>
-    <h1 id="ready-title">평가 준비 완료</h1>
-    <p class="desc">버튼을 누르면 마이크 권한 요청 창이 뜹니다.<br>반드시 [허용]을 눌러주세요.</p>
-    <button class="btn btn-start" id="btn-mic-start">🎙️ 마이크 권한 허용하고 평가 시작</button>
-    <div class="spacer"></div>
-  </div>
-
-  <!-- 실시간 평가 -->
-  <div class="view" id="view-quiz">
-    <div class="progress-row">
-      <span class="progress-count" id="progress-count">문항 1 / 10</span>
-      <span class="timer" id="timer">⏱️ 5초</span>
-    </div>
-    <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
-
-    <div class="hero-card" id="hero-card">
-      <span class="hero-word" id="hero-word">-</span>
-    </div>
-
-    <div class="elapsed-line" id="elapsed-line" style="display:none;">경과 시간 0:00</div>
-    <div class="badge listening" id="badge">🎙️ 말하세요!</div>
-    <div class="wave-wrap"><canvas id="wave-canvas"></canvas></div>
-    <button class="btn btn-restart-mic" id="btn-mic-restart">🔄 마이크 인식이 안 되나요? (재시동)</button>
-  </div>
-
-  <!-- 종료 -->
-  <div class="view" id="view-finish">
-    <div class="spacer"></div>
-    <div class="done-wrap">
-      <div class="spinner"></div>
-      <p class="desc">채점 결과를 전송하는 중입니다...</p>
-    </div>
-    <div class="spacer"></div>
-  </div>
-
-</div>
-
 <script>
-  var PARENT_ORIGIN = null; // opener로부터 첫 메시지를 받을 때 origin을 기록해 이후 검증에 사용
-  var quiz = [];
-  var student = null;
-  var idx = 0;
-  var mode = 'SCORE'; // 'SCORE' | 'TIME'
-  var correctCount = 0;
-  var wrongQuestions = [];
-  var recognition = null;
-  var timerInterval = null;
-  var elapsedInterval = null;
-  var timeLeft = 5;
-  var questionFinalized = false;
-  var startTimestamp = null;
-  var lastHeard = '';
+  // 환경설정 시트에서 읽어온 값 (Index.html의 APP_CONFIG 스크립틀릿에서 주입됨)
+  var MIC_PAGE_URL    = APP_CONFIG.MIC_PAGE_URL;
+  var MIC_PAGE_ORIGIN = APP_CONFIG.MIC_PAGE_ORIGIN;
+
+  var selectedCount = 10;
+  var selectedMode  = 'SCORE'; // 'SCORE' | 'TIME'
+  var selectedStudent = null;  // { id, name }
+  var quizData    = null;      // { quiz: [...] }
+  var lastResult  = null;      // 팝업에서 받은 최종 채점 결과
+  var popupRef    = null;
 
   function showView(id){
     document.querySelectorAll('.view').forEach(function(v){ v.classList.remove('active'); });
     document.getElementById(id).classList.add('active');
   }
 
-  /* ---------- 부모 창(WebApp-A)과 통신 ---------- */
+  function showError(msg){
+    var box = document.getElementById('error-box');
+    box.textContent = msg;
+    box.classList.add('show');
+  }
+  function clearError(){
+    document.getElementById('error-box').classList.remove('show');
+  }
+
+  /* ---------- ① 학생 선택/설정 화면 ---------- */
+
+  var fullStudentList = [];
+
+  google.script.run.withSuccessHandler(function(list){
+    fullStudentList = list;
+    var grades = [];
+    list.forEach(function(s){ if (s.grade && grades.indexOf(s.grade) === -1) grades.push(s.grade); });
+    grades.sort();
+    var gradeSelect = document.getElementById('select-grade');
+    grades.forEach(function(g){
+      var opt = document.createElement('option');
+      opt.value = g; opt.textContent = g + '학년';
+      gradeSelect.appendChild(opt);
+    });
+  }).withFailureHandler(function(err){
+    showError('학생 명단을 불러오지 못했습니다: ' + err.message);
+  }).getStudentList();
+
+  document.getElementById('select-grade').addEventListener('change', function(){
+    var grade = this.value;
+    var classSelect = document.getElementById('select-class');
+    var studentSelect = document.getElementById('select-student');
+
+    classSelect.innerHTML = '';
+    studentSelect.innerHTML = '<option value="">-- 먼저 반을 선택하세요 --</option>';
+    studentSelect.disabled = true;
+    selectedStudent = null;
+
+    if (!grade) {
+      classSelect.innerHTML = '<option value="">-- 먼저 학년을 선택하세요 --</option>';
+      classSelect.disabled = true;
+      return;
+    }
+
+    var classes = [];
+    fullStudentList.forEach(function(s){
+      if (s.grade === grade && classes.indexOf(s.classNo) === -1) classes.push(s.classNo);
+    });
+    classes.sort();
+    classSelect.innerHTML = '<option value="">-- 반 선택 --</option>';
+    classes.forEach(function(c){
+      var opt = document.createElement('option');
+      opt.value = c; opt.textContent = c + '반';
+      classSelect.appendChild(opt);
+    });
+    classSelect.disabled = false;
+  });
+
+  document.getElementById('select-class').addEventListener('change', function(){
+    var grade = document.getElementById('select-grade').value;
+    var classNo = this.value;
+    var studentSelect = document.getElementById('select-student');
+
+    studentSelect.innerHTML = '<option value="">-- 이름 선택 --</option>';
+    selectedStudent = null;
+
+    if (!classNo) {
+      studentSelect.innerHTML = '<option value="">-- 먼저 반을 선택하세요 --</option>';
+      studentSelect.disabled = true;
+      return;
+    }
+
+    var matched = fullStudentList.filter(function(s){ return s.grade === grade && s.classNo === classNo; });
+    matched.sort(function(a, b){ return a.id.localeCompare(b.id); });
+    matched.forEach(function(s){
+      var opt = document.createElement('option');
+      opt.value = s.id;
+      opt.textContent = s.name + ' (' + s.id + ')';
+      opt.dataset.name = s.name;
+      studentSelect.appendChild(opt);
+    });
+    studentSelect.disabled = false;
+  });
+
+  document.getElementById('select-student').addEventListener('change', function(){
+    var opt = this.options[this.selectedIndex];
+    selectedStudent = opt.value ? { id: opt.value, name: opt.dataset.name } : null;
+  });
+
+  var MODE_DESC = {
+    SCORE: '문항마다 제한시간 안에 맞히면 정답, 못 맞히면 오답으로 채점합니다.',
+    TIME: '제한시간 없이, 맞힐 때까지 계속 시도합니다. 전체 문항을 끝내는 데 걸린 총 시간을 기록합니다.'
+  };
+
+  document.querySelectorAll('#mode-row .chip').forEach(function(chip){
+    chip.addEventListener('click', function(){
+      document.querySelectorAll('#mode-row .chip').forEach(function(c){ c.classList.remove('selected'); });
+      chip.classList.add('selected');
+      selectedMode = chip.dataset.mode;
+      document.getElementById('mode-desc').textContent = MODE_DESC[selectedMode];
+    });
+  });
+
+  document.querySelectorAll('#chip-row .chip').forEach(function(chip){
+    chip.addEventListener('click', function(){
+      document.querySelectorAll('#chip-row .chip').forEach(function(c){ c.classList.remove('selected'); });
+      chip.classList.add('selected');
+      selectedCount = Number(chip.dataset.count); // 0 = 전체
+    });
+  });
+
+  document.getElementById('btn-start').addEventListener('click', function(){
+    clearError();
+    if (!selectedStudent) { showError('명단에서 본인 이름을 선택해주세요.'); return; }
+
+    var btn = this;
+    btn.disabled = true;
+    btn.textContent = '문항 준비 중...';
+
+    google.script.run
+      .withSuccessHandler(function(res){
+        btn.disabled = false;
+        btn.textContent = '이 정보로 평가 준비하기';
+        if (!res.success) { showError(res.message || '문항을 불러오지 못했습니다.'); return; }
+        quizData = res;
+        showView('view-waiting');
+      })
+      .withFailureHandler(function(err){
+        btn.disabled = false;
+        btn.textContent = '이 정보로 평가 준비하기';
+        showError('서버 오류가 발생했습니다: ' + err.message);
+      })
+      .getQuiz(selectedCount || 999);
+  });
+
+  /* ---------- ② 대기 화면 → 팝업 오픈 ---------- */
+
+  function openMicPopup(){
+    if (!MIC_PAGE_URL || !MIC_PAGE_ORIGIN) {
+      showError('환경설정 탭에 MIC_PAGE_URL / MIC_PAGE_ORIGIN 값이 없습니다. 시트를 확인해주세요.');
+      return;
+    }
+    // 팝업 차단 방지: 반드시 click 핸들러 내부에서 동기적으로 호출
+    popupRef = window.open(MIC_PAGE_URL, 'micQuiz', 'width=480,height=840');
+    if (!popupRef) {
+      document.getElementById('btn-reopen').style.display = 'block';
+      showError('팝업이 차단되었습니다. 브라우저의 팝업 차단을 해제하고 다시 시도해주세요.');
+      return;
+    }
+    document.getElementById('waiting-text').textContent = '팝업 창에서 마이크 권한을 허용해주세요...';
+    document.getElementById('btn-open-popup').style.display = 'none';
+    document.getElementById('btn-reopen').style.display = 'block';
+  }
+
+  document.getElementById('btn-open-popup').addEventListener('click', openMicPopup);
+  document.getElementById('btn-reopen').addEventListener('click', openMicPopup);
+
+  /* ---------- 팝업과의 postMessage 통신 ---------- */
 
   window.addEventListener('message', function(evt){
+    if (evt.origin !== MIC_PAGE_ORIGIN) return; // 다른 출처 메시지는 무시 (보안)
     var data = evt.data || {};
-    if (data.type === 'INIT') {
-      PARENT_ORIGIN = evt.origin; // 최초 INIT을 보낸 출처를 신뢰 출처로 고정
-      quiz = data.quiz || [];
-      student = data.student || {};
-      mode = data.mode === 'TIME' ? 'TIME' : 'SCORE';
-      document.getElementById('ready-title').textContent = (student.name || '') + '님, 평가 준비 완료';
-      showView('view-ready');
+
+    if (data.type === 'READY') {
+      popupRef.postMessage({
+        type: 'INIT',
+        quiz: quizData.quiz,
+        student: selectedStudent,
+        mode: selectedMode
+      }, MIC_PAGE_ORIGIN);
+      document.getElementById('waiting-text').textContent = '평가가 진행 중입니다. 팝업 창을 확인해주세요.';
+    }
+
+    if (data.type === 'DONE') {
+      lastResult = data.result; // { mode, correctCount?, totalCount, wrongQuestions?, elapsedSeconds? }
+      if (popupRef) popupRef.close();
+      submitFinalResult();
     }
   });
 
-  window.addEventListener('load', function(){
-    if (window.opener) {
-      // opener의 origin을 아직 모르므로 '*'로 READY만 알림 (INIT 수신 시 origin 고정)
-      window.opener.postMessage({ type: 'READY' }, '*');
+  function submitFinalResult(){
+    var payload = Object.assign({}, lastResult, {
+      studentId: selectedStudent.id,
+      studentName: selectedStudent.name
+    });
+
+    google.script.run
+      .withSuccessHandler(function(res){
+        if (!res.success) { showError(res.message || '기록 저장에 실패했습니다.'); return; }
+        renderResult(res, lastResult);
+        showView('view-result');
+      })
+      .withFailureHandler(function(err){
+        showError('결과 저장 중 오류: ' + err.message);
+      })
+      .submitResult(payload);
+  }
+
+  /* ---------- ③ 결과 화면 ---------- */
+
+  function renderResult(res, result){
+    var isTime = res.mode === 'TIME';
+    document.getElementById('score-hero-score').style.display = isTime ? 'none' : 'block';
+    document.getElementById('score-hero-time').style.display = isTime ? 'block' : 'none';
+    document.getElementById('stat-row-score').style.display = isTime ? 'none' : 'flex';
+    document.getElementById('wrong-box').style.display = 'none';
+
+    if (isTime) {
+      var m = Math.floor(res.elapsedSeconds / 60);
+      var s = res.elapsedSeconds % 60;
+      document.getElementById('time-num').textContent = m + ':' + (s < 10 ? '0' : '') + s;
+      return;
     }
+
+    document.getElementById('score-num').textContent = res.score;
+    document.getElementById('stat-correct').textContent = res.correct;
+    document.getElementById('stat-wrong').textContent = res.total - res.correct;
+    document.getElementById('stat-total').textContent = res.total;
+
+    var wrongBox = document.getElementById('wrong-box');
+    var wrongTags = document.getElementById('wrong-tags');
+    wrongTags.innerHTML = '';
+    if (result.wrongQuestions && result.wrongQuestions.length) {
+      wrongBox.style.display = 'block';
+      result.wrongQuestions.forEach(function(q){
+        var span = document.createElement('span');
+        span.className = 'tag';
+        span.textContent = q;
+        wrongTags.appendChild(span);
+      });
+    }
+  }
+
+  document.getElementById('btn-restart').addEventListener('click', function(){
+    location.reload();
   });
-
-  function sendDone(){
-    stopWaveform();
-    var result = mode === 'TIME'
-      ? { mode: 'TIME', totalCount: quiz.length, elapsedSeconds: Math.round((Date.now() - startTimestamp) / 1000) }
-      : { mode: 'SCORE', correctCount: correctCount, totalCount: quiz.length, wrongQuestions: wrongQuestions };
-    showView('view-finish');
-    if (window.opener && PARENT_ORIGIN) {
-      window.opener.postMessage({ type: 'DONE', result: result }, PARENT_ORIGIN);
-    }
-  }
-
-  /* ---------- 마이크 예열 ---------- */
-
-  document.getElementById('btn-mic-start').addEventListener('click', function(){
-    idx = 0; correctCount = 0; wrongQuestions = [];
-    startTimestamp = Date.now();
-    showView('view-quiz');
-
-    // 타이머/경과시간 UI를 모드에 맞게 전환
-    document.getElementById('timer').style.display = mode === 'TIME' ? 'none' : 'inline';
-    document.getElementById('elapsed-line').style.display = mode === 'TIME' ? 'block' : 'none';
-
-    startPulseLoop(); // 캔버스 애니메이션 루프 시작 (마이크를 별도로 열지 않음)
-    runQuestion();
-
-    if (mode === 'TIME') {
-      clearInterval(elapsedInterval);
-      elapsedInterval = setInterval(function(){
-        var sec = Math.round((Date.now() - startTimestamp) / 1000);
-        var m = Math.floor(sec / 60), s = sec % 60;
-        document.getElementById('elapsed-line').textContent = '경과 시간 ' + m + ':' + (s < 10 ? '0' : '') + s;
-      }, 1000);
-    }
-  });
-
-  /* ---------- 실시간 음성 파형(모사) 시각화 ----------
-   * ⚠ 별도의 getUserMedia로 마이크를 또 열면, 안드로이드 Chrome 등 일부 환경에서
-   *   SpeechRecognition이 오디오를 아예 못 받는 문제가 실제로 확인되었습니다.
-   *   그래서 마이크를 새로 열지 않고, SpeechRecognition 자신이 쏘는
-   *   onsoundstart(소리 감지)/onsoundend(소리 끊김) 이벤트로 막대를 움직입니다.
-   *   → 마이크 소비자가 SpeechRecognition 단 하나뿐이라 충돌 자체가 불가능합니다.
-   */
-
-  var soundActive = false;
-  var waveformRAF = null;
-
-  function setSoundActive(v){ soundActive = v; }
-
-  function startPulseLoop(){
-    var canvas = document.getElementById('wave-canvas');
-    var ctx = canvas.getContext('2d');
-    var dpr = window.devicePixelRatio || 1;
-    canvas.width = canvas.clientWidth * dpr;
-    canvas.height = canvas.clientHeight * dpr;
-    var barCount = 24;
-    var phase = 0;
-
-    cancelAnimationFrame(waveformRAF);
-    (function loop(){
-      waveformRAF = requestAnimationFrame(loop);
-      phase += 0.18;
-      var w = canvas.width, h = canvas.height;
-      ctx.clearRect(0, 0, w, h);
-      var barWidth = w / barCount * 0.6;
-      var gap = w / barCount * 0.4;
-      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--primary').trim() || '#5B4FE9';
-      for (var i = 0; i < barCount; i++) {
-        var base = soundActive
-          ? (0.35 + 0.6 * Math.abs(Math.sin(phase + i * 0.7)) * (0.6 + 0.4 * Math.random()))
-          : (0.08 + 0.04 * Math.abs(Math.sin(phase * 0.5 + i)));
-        var barH = Math.max(3 * dpr, base * h);
-        var x = i * (barWidth + gap);
-        var y = (h - barH) / 2;
-        ctx.beginPath();
-        if (ctx.roundRect) { ctx.roundRect(x, y, barWidth, barH, 3 * dpr); ctx.fill(); }
-        else { ctx.fillRect(x, y, barWidth, barH); }
-      }
-    })();
-  }
-
-  function stopWaveform(){
-    if (waveformRAF) cancelAnimationFrame(waveformRAF);
-  }
-
-  /* ---------- 문항 진행 ---------- */
-
-  function normalize(s){
-    return String(s || '').replace(/\s+/g, '').toLowerCase();
-  }
-
-  function runQuestion(){
-    if (idx >= quiz.length) { clearInterval(elapsedInterval); sendDone(); return; }
-    var item = quiz[idx];
-    questionFinalized = false;
-    lastHeard = '';
-
-    document.getElementById('progress-count').textContent = '문항 ' + (idx + 1) + ' / ' + quiz.length;
-    document.getElementById('progress-fill').style.width = Math.round((idx / quiz.length) * 100) + '%';
-
-    var hero = document.getElementById('hero-card');
-    hero.classList.remove('flip'); void hero.offsetWidth; hero.classList.add('flip');
-    document.getElementById('hero-word').textContent = item.question;
-
-    setBadge('listening', '🎙️ 말하세요!');
-
-    if (mode === 'SCORE') {
-      timeLeft = item.timeLimit || 5;
-      updateTimerUI();
-      clearInterval(timerInterval);
-      timerInterval = setInterval(function(){
-        timeLeft--;
-        updateTimerUI();
-        if (timeLeft <= 0) { clearInterval(timerInterval); finalizeQuestion(false, item); }
-      }, 1000);
-    }
-    // TIME 모드는 제한시간 없이 정답이 나올 때까지 계속 듣습니다.
-
-    startRecognition(item);
-  }
-
-  function updateTimerUI(){
-    var t = document.getElementById('timer');
-    t.textContent = '⏱️ ' + timeLeft + '초';
-    t.classList.toggle('warn', timeLeft <= 2);
-  }
-
-  function setBadge(state, text){
-    var b = document.getElementById('badge');
-    b.className = 'badge ' + state;
-    b.textContent = text;
-  }
-
-  function startRecognition(item){
-    var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { setBadge('wrong', '⚠️ 이 브라우저는 음성 인식을 지원하지 않습니다'); return; }
-
-    recognition = new SR();
-    recognition.lang = 'ko-KR';
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 3;
-
-    recognition.onresult = function(evt){
-      if (questionFinalized) return;
-      var heard = evt.results[0][0].transcript;
-      lastHeard = heard; // 인식은 됐으나 정답과 불일치할 경우 진단용으로 표시
-      for (var i = 0; i < evt.results[0].length; i++) {
-        var said = normalize(evt.results[0][i].transcript);
-        var isMatch = item.answers.some(function(ans){ return normalize(ans) === said; });
-        if (isMatch) { finalizeQuestion(true, item); return; }
-      }
-    };
-
-    recognition.onend = function(){
-      // 침묵 등으로 엔진이 종료돼도, 문항이 아직 안 끝났으면 자동 재시동
-      var stillWaiting = mode === 'TIME' ? !questionFinalized : (!questionFinalized && timeLeft > 0);
-      if (stillWaiting) { try { recognition.start(); } catch (e) {} }
-    };
-
-    recognition.onerror = function(){ /* no-speech 등은 onend에서 재시동 처리 */ };
-
-    recognition.onsoundstart = function(){ setSoundActive(true); };
-    recognition.onsoundend   = function(){ setSoundActive(false); };
-    recognition.onaudioend   = function(){ setSoundActive(false); };
-
-    try { recognition.start(); } catch (e) {}
-  }
-
-  document.getElementById('btn-mic-restart').addEventListener('click', function(){
-    if (recognition) { try { recognition.stop(); } catch (e) {} }
-    var item = quiz[idx];
-    if (!questionFinalized) startRecognition(item);
-  });
-
-  function finalizeQuestion(isCorrect, item){
-    if (questionFinalized) return;
-    questionFinalized = true;
-    clearInterval(timerInterval);
-    if (recognition) { try { recognition.onend = null; recognition.stop(); } catch (e) {} }
-
-    if (isCorrect) {
-      correctCount++;
-      setBadge('correct', '⭕ 정답! (' + item.answers[0] + ')');
-    } else {
-      wrongQuestions.push(item.question);
-      var heardNote = lastHeard ? ('인식된 발음: "' + lastHeard + '"') : '마이크에 아무 소리도 인식되지 않음';
-      setBadge('wrong', '❌ 시간 초과! (정답: ' + item.answers.join(', ') + ') · ' + heardNote);
-    }
-
-    setTimeout(function(){ idx++; runQuestion(); }, isCorrect ? 700 : 1200);
-  }
 </script>
-</body>
-</html>
