@@ -169,6 +169,8 @@
   var questionFinalized = false;
   var startTimestamp = null;
   var lastHeard = '';
+  var lastMicActivity = 0;
+  var micWatchdog = null;
 
   function showView(id){
     document.querySelectorAll('.view').forEach(function(v){ v.classList.remove('active'); });
@@ -199,6 +201,7 @@
 
   function sendDone(){
     stopWaveform();
+    stopMicWatchdog();
     var result = mode === 'TIME'
       ? { mode: 'TIME', totalCount: quiz.length, elapsedSeconds: Math.round((Date.now() - startTimestamp) / 1000) }
       : { mode: 'SCORE', correctCount: correctCount, totalCount: quiz.length, wrongQuestions: wrongQuestions };
@@ -221,6 +224,7 @@
 
     startPulseLoop(); // 캔버스 애니메이션 루프 시작 (마이크를 별도로 열지 않음)
     initSfx();         // 효과음용 오디오 컨텍스트도 같은 사용자 제스처 안에서 준비
+    startMicWatchdog(); // 마이크가 조용히 멈추는 것을 감시
     runQuestion();
 
     if (mode === 'TIME') {
@@ -320,6 +324,7 @@
     var item = quiz[idx];
     questionFinalized = false;
     lastHeard = '';
+    lastMicActivity = Date.now();
 
     document.getElementById('progress-count').textContent = '문항 ' + (idx + 1) + ' / ' + quiz.length;
     document.getElementById('progress-fill').style.width = Math.round((idx / quiz.length) * 100) + '%';
@@ -368,7 +373,10 @@
     recognition.interimResults = false;
     recognition.maxAlternatives = 3;
 
+    recognition.onstart = function(){ lastMicActivity = Date.now(); };
+
     recognition.onresult = function(evt){
+      lastMicActivity = Date.now();
       if (questionFinalized) return;
       var heard = evt.results[0][0].transcript;
       lastHeard = heard; // 인식은 됐으나 정답과 불일치할 경우 진단용으로 표시
@@ -379,21 +387,50 @@
     };
 
     recognition.onend = function(){
+      lastMicActivity = Date.now();
       // 침묵 등으로 엔진이 종료돼도, 문항이 아직 안 끝났으면 자동 재시동
+      // (바로 재시작하면 일부 기기에서 "이미 시작됨" 오류가 나 조용히 실패하는 경우가 있어 살짝 지연 후 재시도)
       var stillWaiting = mode === 'TIME' ? !questionFinalized : (!questionFinalized && timeLeft > 0);
-      if (stillWaiting) { try { recognition.start(); } catch (e) {} }
+      if (stillWaiting) {
+        setTimeout(function(){
+          if (questionFinalized) return;
+          try { recognition.start(); }
+          catch (e) { startRecognition(item); } // 재시작 자체가 실패하면 엔진을 통째로 새로 만듦
+        }, 250);
+      }
     };
 
-    recognition.onerror = function(){ /* no-speech 등은 onend에서 재시동 처리 */ };
+    recognition.onerror = function(){ lastMicActivity = Date.now(); /* no-speech 등은 onend에서 재시동 처리 */ };
 
-    recognition.onsoundstart = function(){ setSoundActive(true); };
-    recognition.onsoundend   = function(){ setSoundActive(false); };
+    recognition.onsoundstart = function(){ lastMicActivity = Date.now(); setSoundActive(true); };
+    recognition.onsoundend   = function(){ lastMicActivity = Date.now(); setSoundActive(false); };
     recognition.onaudioend   = function(){ setSoundActive(false); };
 
     try { recognition.start(); } catch (e) {}
   }
 
+  /**
+   * 엔진이 onend/onerror 신호조차 없이 조용히 멈추는 경우를 대비한 감시 타이머.
+   * 일정 시간(4초) 동안 어떤 반응도 없으면 엔진을 통째로 새로 만들어 재시동합니다.
+   * (지금까지 "재시동 버튼을 계속 눌러줘야 하는" 증상이 정확히 이 상황입니다.)
+   */
+  function startMicWatchdog(){
+    clearInterval(micWatchdog);
+    micWatchdog = setInterval(function(){
+      if (questionFinalized) return;
+      if (Date.now() - lastMicActivity > 4000) {
+        var item = quiz[idx];
+        if (item) startRecognition(item);
+      }
+    }, 2000);
+  }
+
+  function stopMicWatchdog(){
+    clearInterval(micWatchdog);
+  }
+
   document.getElementById('btn-mic-restart').addEventListener('click', function(){
+    lastMicActivity = Date.now();
     if (recognition) { try { recognition.stop(); } catch (e) {} }
     var item = quiz[idx];
     if (!questionFinalized) startRecognition(item);
