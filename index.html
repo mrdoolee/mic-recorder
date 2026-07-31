@@ -422,13 +422,27 @@
    * 일정 시간(4초) 동안 어떤 반응도 없으면 엔진을 통째로 새로 만들어 재시동합니다.
    * (지금까지 "재시동 버튼을 계속 눌러줘야 하는" 증상이 정확히 이 상황입니다.)
    */
+  /** 엔진을 새로 만들기 전, 기존 엔진의 이벤트 리스너부터 떼어내고 정지 (좀비 이벤트 방지) */
+  function hardStopRecognition(){
+    if (!recognition) return;
+    try {
+      recognition.onend = null;
+      recognition.onresult = null;
+      recognition.onerror = null;
+      recognition.onsoundstart = null;
+      recognition.onsoundend = null;
+      recognition.onaudioend = null;
+      recognition.stop();
+    } catch (e) {}
+  }
+
   function startMicWatchdog(){
     clearInterval(micWatchdog);
     micWatchdog = setInterval(function(){
       if (questionFinalized) return;
       if (Date.now() - lastMicActivity > 4000) {
         var item = quiz[idx];
-        if (item) startRecognition(item);
+        if (item) { hardStopRecognition(); startRecognition(item); }
       }
     }, 2000);
   }
@@ -439,7 +453,7 @@
 
   document.getElementById('btn-mic-restart').addEventListener('click', function(){
     lastMicActivity = Date.now();
-    if (recognition) { try { recognition.stop(); } catch (e) {} }
+    hardStopRecognition();
     var item = quiz[idx];
     if (!questionFinalized) startRecognition(item);
   });
@@ -492,7 +506,7 @@
     if (questionFinalized) return;
     questionFinalized = true;
     clearInterval(timerInterval);
-    if (recognition) { try { recognition.onend = null; recognition.stop(); } catch (e) {} }
+    hardStopRecognition();
 
     if (isCorrect) {
       correctCount++;
