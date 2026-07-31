@@ -364,85 +364,92 @@
     b.textContent = text;
   }
 
-  function startRecognition(item){
+  /**
+   * ⚠ 재설계: 문항/재시동마다 new SR()로 엔진을 계속 새로 만들던 방식을 버리고,
+   * 세션 전체에서 엔진 객체 하나만 만들어서 재사용합니다.
+   * (엔진을 계속 새로 만들면, 옛 엔진이 마이크를 완전히 놓기 전에 새 엔진이
+   *  마이크를 잡으려다 브라우저가 완전히 먹통이 되는 경우가 있었습니다.)
+   */
+  var currentItem = null;
+
+  function initRecognitionEngine(){
     var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { setBadge('wrong', '⚠️ 이 브라우저는 음성 인식을 지원하지 않습니다'); return; }
+    if (!SR) return null;
+    var r = new SR();
+    r.continuous = true;   // 발화가 끝날 때마다 멈추지 않고 계속 듣기 (끊김 방지)
+    r.interimResults = false;
+    r.maxAlternatives = 3;
 
-    recognition = new SR();
-    recognition.lang = item.lang || 'ko-KR'; // 문항(데이터 시트)별 언어 설정 반영
-    recognition.continuous = true;   // 발화가 끝날 때마다 엔진이 멈추지 않고 계속 듣도록 (끊김 방지)
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 3;
+    r.onstart = function(){ lastMicActivity = Date.now(); };
 
-    recognition.onstart = function(){ lastMicActivity = Date.now(); };
-
-    recognition.onresult = function(evt){
+    r.onresult = function(evt){
       lastMicActivity = Date.now();
-      if (questionFinalized) return;
+      if (questionFinalized || !currentItem) return;
       // continuous 모드에서는 evt.results가 세션 전체 누적 배열이므로,
-      // 이번에 "새로" 들어온 결과만 evt.resultIndex부터 훑어야 합니다.
-      // (예전 evt.results[0]만 보던 방식은 두 번째 발화부터 첫 결과와 계속 비교하는 버그가 됩니다)
-      for (var r = evt.resultIndex; r < evt.results.length; r++) {
-        var result = evt.results[r];
+      // 이번에 "새로" 들어온 결과만 evt.resultIndex부터 훑습니다.
+      for (var res = evt.resultIndex; res < evt.results.length; res++) {
+        var result = evt.results[res];
         if (!result.isFinal) continue;
         var heard = result[0].transcript;
         lastHeard = heard; // 인식은 됐으나 정답과 불일치할 경우 진단용으로 표시
         for (var i = 0; i < result.length; i++) {
           var alt = result[i].transcript;
-          if (isAnswerMatch(alt, item.answers)) { finalizeQuestion(true, item); return; }
+          if (isAnswerMatch(alt, currentItem.answers)) { finalizeQuestion(true, currentItem); return; }
         }
       }
     };
 
-    recognition.onend = function(){
+    r.onend = function(){
       lastMicActivity = Date.now();
-      // 침묵 등으로 엔진이 종료돼도, 문항이 아직 안 끝났으면 자동 재시동
-      // (바로 재시작하면 일부 기기에서 "이미 시작됨" 오류가 나 조용히 실패하는 경우가 있어 살짝 지연 후 재시도)
+      // 침묵 등으로 엔진이 멈춰도, 문항이 아직 안 끝났으면 같은 엔진으로 재시동
       var stillWaiting = mode === 'TIME' ? !questionFinalized : (!questionFinalized && timeLeft > 0);
       if (stillWaiting) {
         setTimeout(function(){
           if (questionFinalized) return;
-          try { recognition.start(); }
-          catch (e) { startRecognition(item); } // 재시작 자체가 실패하면 엔진을 통째로 새로 만듦
+          try { recognition.start(); } catch (e) {}
         }, 250);
       }
     };
 
-    recognition.onerror = function(){ lastMicActivity = Date.now(); /* no-speech 등은 onend에서 재시동 처리 */ };
+    r.onerror = function(){ lastMicActivity = Date.now(); };
+    r.onsoundstart = function(){ lastMicActivity = Date.now(); setSoundActive(true); };
+    r.onsoundend   = function(){ lastMicActivity = Date.now(); setSoundActive(false); };
+    r.onaudioend   = function(){ setSoundActive(false); };
 
-    recognition.onsoundstart = function(){ lastMicActivity = Date.now(); setSoundActive(true); };
-    recognition.onsoundend   = function(){ lastMicActivity = Date.now(); setSoundActive(false); };
-    recognition.onaudioend   = function(){ setSoundActive(false); };
+    return r;
+  }
 
-    try { recognition.start(); } catch (e) {}
+  function startRecognition(item){
+    currentItem = item;
+    if (!recognition) {
+      recognition = initRecognitionEngine();
+      if (!recognition) { setBadge('wrong', '⚠️ 이 브라우저는 음성 인식을 지원하지 않습니다'); return; }
+    }
+    try { recognition.lang = item.lang || 'ko-KR'; } catch (e) {} // 문항별 언어 설정 반영
+    try { recognition.start(); } catch (e) { /* 이미 실행 중이면 무시 (정상 상황) */ }
+  }
+
+  /** 재시동 버튼·감시타이머 공용: 같은 엔진을 멈췄다가 살짝 뒤에 다시 시작 (새 엔진을 만들지 않음) */
+  function restartRecognitionEngine(){
+    if (!recognition) { startRecognition(currentItem); return; }
+    try { recognition.stop(); } catch (e) {}
+    setTimeout(function(){
+      if (questionFinalized) return;
+      try { recognition.start(); } catch (e) {}
+    }, 300);
   }
 
   /**
    * 엔진이 onend/onerror 신호조차 없이 조용히 멈추는 경우를 대비한 감시 타이머.
-   * 일정 시간(4초) 동안 어떤 반응도 없으면 엔진을 통째로 새로 만들어 재시동합니다.
+   * 일정 시간(4초) 동안 어떤 반응도 없으면 같은 엔진을 멈췄다가 다시 시작합니다.
    * (지금까지 "재시동 버튼을 계속 눌러줘야 하는" 증상이 정확히 이 상황입니다.)
    */
-  /** 엔진을 새로 만들기 전, 기존 엔진의 이벤트 리스너부터 떼어내고 정지 (좀비 이벤트 방지) */
-  function hardStopRecognition(){
-    if (!recognition) return;
-    try {
-      recognition.onend = null;
-      recognition.onresult = null;
-      recognition.onerror = null;
-      recognition.onsoundstart = null;
-      recognition.onsoundend = null;
-      recognition.onaudioend = null;
-      recognition.stop();
-    } catch (e) {}
-  }
-
   function startMicWatchdog(){
     clearInterval(micWatchdog);
     micWatchdog = setInterval(function(){
       if (questionFinalized) return;
       if (Date.now() - lastMicActivity > 4000) {
-        var item = quiz[idx];
-        if (item) { hardStopRecognition(); startRecognition(item); }
+        restartRecognitionEngine();
       }
     }, 2000);
   }
@@ -453,9 +460,7 @@
 
   document.getElementById('btn-mic-restart').addEventListener('click', function(){
     lastMicActivity = Date.now();
-    hardStopRecognition();
-    var item = quiz[idx];
-    if (!questionFinalized) startRecognition(item);
+    restartRecognitionEngine();
   });
 
   /* ---------- 정답/오답 효과음 (외부 음원 없이 Web Audio API로 직접 생성) ---------- */
@@ -506,7 +511,7 @@
     if (questionFinalized) return;
     questionFinalized = true;
     clearInterval(timerInterval);
-    hardStopRecognition();
+    if (recognition) { try { recognition.stop(); } catch (e) {} }
 
     if (isCorrect) {
       correctCount++;
